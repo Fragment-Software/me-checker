@@ -4,6 +4,3 @@ BATCH_SIZE = 10
 # The maximum number of asynchronous tasks running concurrently
 # (not directly related to operating system threads)
 PARALLELISM = 10
-
-# Main solana wallet
-MAIN_SOL_WALLET = ""

@@ -4,3 +4,5 @@ pub const VERIFY_AND_CREATE_SESSION: &str =
 pub const AUTH_SESSION: &str = "https://mefoundation.com/api/trpc/auth.session";
 
 pub const AUTH_LINK_WALLET: &str = "https://mefoundation.com/api/trpc/auth.linkWallet";
+
+pub const WALLETS: &str = "https://mefoundation.com/wallets";

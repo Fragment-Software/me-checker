@@ -12,7 +12,7 @@ use reqwest::{
 use crate::utils::fetch::{send_http_request, RequestParams};
 
 use super::{
-    constants::{AUTH_LINK_WALLET, AUTH_SESSION, VERIFY_AND_CREATE_SESSION},
+    constants::{AUTH_LINK_WALLET, AUTH_SESSION, VERIFY_AND_CREATE_SESSION, WALLETS},
     schemas::{
         LinkWalletBody, LinkWalletResponse, VerifyAndCreateSessionBody,
         VerifyAndCreateSessionResponse,
@@ -178,4 +178,41 @@ pub async fn auth_link_wallet(
     };
 
     send_http_request::<LinkWalletResponse>(request_params, cookie_jar).await
+}
+
+pub async fn wallets(
+    proxy: Option<&Proxy>,
+    cookie_jar: Option<Arc<Jar>>,
+) -> eyre::Result<Option<String>> {
+    let mut headers = HeaderMap::new();
+
+    headers.insert(ACCEPT, HeaderValue::from_static("*/*"));
+    headers.insert(ACCEPT_LANGUAGE, HeaderValue::from_static("en-US,en;q=0.5"));
+    headers.insert("baggage", HeaderValue::from_static("sentry-environment=production,sentry-release=rUjks-Y9GR01z74atxAEP,sentry-public_key=43f5a6f01fe6dff7b5c0d7c54530d6a0,sentry-trace_id=ef57f76f823948928981c4fe54fdb863,sentry-sample_rate=0.05,sentry-sampled=false"));
+    headers.insert("priority", HeaderValue::from_static("u=1, i"));
+    headers.insert("next-router-state-tree", HeaderValue::from_static("%5B%22%22%2C%7B%22children%22%3A%5B%22(dashboard)%22%2C%7B%22children%22%3A%5B%22(link)%22%2C%7B%22children%22%3A%5B%22wallets%22%2C%7B%22children%22%3A%5B%22__PAGE__%22%2C%7B%7D%2C%22%2Fwallets%22%2C%22refresh%22%5D%7D%5D%7D%5D%7D%5D%7D%2Cnull%2C%22refetch%22%5D"));
+    headers.insert(
+        REFERER,
+        HeaderValue::from_static("https://mefoundation.com/wallets"),
+    );
+    headers.insert("rsc", HeaderValue::from_static("1"));
+    headers.insert("sec-fetch-dest", HeaderValue::from_static("empty"));
+    headers.insert("sec-fetch-mode", HeaderValue::from_static("cors"));
+    headers.insert("sec-fetch-site", HeaderValue::from_static("same-origin"));
+    headers.insert("sec-fetch-user", HeaderValue::from_static("?1"));
+    headers.insert("upgrade-insecure-requests", HeaderValue::from_static("1"));
+    headers.insert("user-agent", HeaderValue::from_static("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 OPR/114.0.0.0 (Edition Yx GX)"));
+
+    let query_args = [("_rsc", "1vr9w")].into_iter().collect();
+
+    let request_params = RequestParams {
+        url: WALLETS,
+        method: Method::GET,
+        body: None::<serde_json::Value>,
+        query_args: Some(query_args),
+        proxy,
+        headers: Some(headers),
+    };
+
+    send_http_request::<String>(request_params, cookie_jar).await
 }

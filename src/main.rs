@@ -10,10 +10,14 @@ use crypto::{
     signer::{get_address, get_wallet, sign_message},
 };
 
-use me::api::{auth_link_wallet, auth_session, verify_and_create_session};
+use me::{
+    api::{auth_link_wallet, auth_session, verify_and_create_session, wallets},
+    utils::extract_allocation_amount,
+};
 
+use solana_sdk::signature::Keypair;
 use utils::{
-    constants::{ELIGIBLE_FILE_PATH, PRIVATE_KEYS_FILE_PATH, PROXIES_FILE_PATH},
+    constants::{ELIGIBLE_FILE_PATH, PROXIES_FILE_PATH, SECRETS_FILE_PATH},
     files::read_file_lines,
     logger::init_default_logger,
 };
@@ -38,11 +42,11 @@ async fn main() -> eyre::Result<()> {
         .map(|proxy_url| Proxy::all(proxy_url).expect("Invalid proxy URL"))
         .collect();
 
-    let private_keys = Arc::new(read_file_lines(PRIVATE_KEYS_FILE_PATH).await?);
+    let secrets = Arc::new(read_file_lines(SECRETS_FILE_PATH).await?);
 
     let all_wallets: Vec<String> = {
         let mut wallets = Vec::new();
-        wallets.extend(private_keys.iter().map(|key| key.to_owned()));
+        wallets.extend(secrets.iter().map(|key| key.to_owned()));
         wallets
     };
 
@@ -60,8 +64,8 @@ async fn main() -> eyre::Result<()> {
             let proxies = Arc::clone(&proxies);
             let cookie_jar = Arc::clone(&cookie_jar);
 
-            let main_wallet = get_wallet(&config.main_sol_wallet);
-            let main_address = get_address(&main_wallet);
+            let random_wallet = Keypair::new();
+            let main_address = get_address(&random_wallet);
 
             async move {
                 let mut eligible_file = OpenOptions::new()
@@ -71,12 +75,19 @@ async fn main() -> eyre::Result<()> {
                     .await
                     .expect("Failed to open file for writing");
 
-                for (index, private_key) in batch.into_iter().enumerate() {
+                for (index, secret) in batch.into_iter().enumerate() {
                     let uuid = Uuid::new_v4().to_string();
 
                     let proxy = proxies[index % proxies.len()].clone();
 
-                    let wallet = get_wallet(&private_key);
+                    let wallet = match get_wallet(&secret) {
+                        Ok(wallet) => wallet,
+                        Err(e) => {
+                            tracing::error!("{e}");
+                            continue;
+                        }
+                    };
+
                     let address = get_address(&wallet);
 
                     if auth_session(&uuid, Some(&proxy), Some(Arc::clone(&cookie_jar)))
@@ -89,7 +100,7 @@ async fn main() -> eyre::Result<()> {
 
                     let verify_message = get_verify_message(&uuid);
 
-                    let verify_signature = sign_message(&main_wallet, &verify_message)
+                    let verify_signature = sign_message(&random_wallet, &verify_message)
                         .expect("Failed to sign verify message");
 
                     if let Ok(Some(verify_and_create_response)) = verify_and_create_session(
@@ -144,11 +155,42 @@ async fn main() -> eyre::Result<()> {
                                         if let Some(eligibility) = &json.eligibility {
                                             if let Some(eligible) = &eligibility.eligibility {
                                                 if eligible == "eligible" {
-                                                    let entry = format!("{}\n", address);
-                                                    eligible_file
-                                                        .write_all(entry.as_bytes())
-                                                        .await
-                                                        .expect("Failed to write to file");
+                                                    if let Ok(Some(allocation_response)) = wallets(
+                                                        Some(&proxy),
+                                                        Some(Arc::clone(&cookie_jar)),
+                                                    )
+                                                    .await
+                                                    {
+                                                        if let Some(amount) =
+                                                            extract_allocation_amount(
+                                                                &allocation_response,
+                                                            )
+                                                        {
+                                                            let allocation =
+                                                                amount as f64 / 10f64.powi(6);
+
+                                                            let entry = format!(
+                                                                "{}: {}\n",
+                                                                address, allocation
+                                                            );
+                                                            eligible_file
+                                                                .write_all(entry.as_bytes())
+                                                                .await
+                                                                .expect("Failed to write to file");
+                                                        } else {
+                                                            let entry = format!("{}\n", address);
+                                                            eligible_file
+                                                                .write_all(entry.as_bytes())
+                                                                .await
+                                                                .expect("Failed to write to file");
+                                                        }
+                                                    } else {
+                                                        let entry = format!("{}\n", address);
+                                                        eligible_file
+                                                            .write_all(entry.as_bytes())
+                                                            .await
+                                                            .expect("Failed to write to file");
+                                                    }
                                                 }
                                             }
                                         }

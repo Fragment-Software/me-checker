@@ -8,7 +8,6 @@ const CONFIG_FILE_PATH: &str = "data/config.toml";
 pub struct Config {
     pub batch_size: usize,
     pub parallelism: usize,
-    pub main_sol_wallet: String,
 }
 
 impl Config {
