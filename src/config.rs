@@ -6,7 +6,6 @@ const CONFIG_FILE_PATH: &str = "data/config.toml";
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub struct Config {
-    pub batch_size: usize,
     pub parallelism: usize,
 }
 

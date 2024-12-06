@@ -24,7 +24,7 @@ use utils::{
 
 use reqwest::{cookie::Jar, Proxy};
 
-use tokio::{fs::OpenOptions, io::AsyncWriteExt};
+use tokio::{fs::OpenOptions, io::AsyncWriteExt, sync::Mutex};
 
 use futures::stream::{self, StreamExt};
 use std::sync::Arc;
@@ -44,153 +44,138 @@ async fn main() -> eyre::Result<()> {
 
     let secrets = Arc::new(read_file_lines(SECRETS_FILE_PATH).await?);
 
-    let all_wallets: Vec<String> = {
-        let mut wallets = Vec::new();
-        wallets.extend(secrets.iter().map(|key| key.to_owned()));
-        wallets
-    };
+    let all_wallets: Vec<String> = secrets.iter().map(|key: &String| key.to_owned()).collect();
 
-    let batched_wallets: Vec<Vec<String>> = all_wallets
-        .chunks(config.batch_size)
-        .map(|chunk| chunk.to_vec())
-        .collect();
+    let cookie_jar: Arc<Jar> = Arc::new(Jar::default());
+    let proxies: Arc<Vec<Proxy>> = Arc::new(proxies);
 
-    let cookie_jar = Arc::new(Jar::default());
+    let file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(ELIGIBLE_FILE_PATH)
+        .await
+        .expect("Failed to open file for writing");
+    let eligible_file = Arc::new(Mutex::new(file));
 
-    let proxies = Arc::new(proxies);
-
-    stream::iter(batched_wallets)
-        .for_each_concurrent(config.parallelism, |batch| {
+    stream::iter(all_wallets.into_iter().enumerate())
+        .for_each_concurrent(config.parallelism, |(index, secret)| {
             let proxies = Arc::clone(&proxies);
             let cookie_jar = Arc::clone(&cookie_jar);
-
-            let random_wallet = Keypair::new();
-            let main_address = get_address(&random_wallet);
+            let eligible_file = Arc::clone(&eligible_file);
 
             async move {
-                let mut eligible_file = OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(ELIGIBLE_FILE_PATH)
-                    .await
-                    .expect("Failed to open file for writing");
+                let random_wallet = Keypair::new();
+                let main_address = get_address(&random_wallet);
 
-                for (index, secret) in batch.into_iter().enumerate() {
-                    let uuid = Uuid::new_v4().to_string();
+                let uuid = Uuid::new_v4().to_string();
 
-                    let proxy = proxies[index % proxies.len()].clone();
+                let proxy = proxies[index % proxies.len()].clone();
 
-                    let wallet = match get_wallet(&secret) {
-                        Ok(wallet) => wallet,
-                        Err(e) => {
-                            tracing::error!("{e}");
-                            continue;
-                        }
-                    };
-
-                    let address = get_address(&wallet);
-
-                    if auth_session(&uuid, Some(&proxy), Some(Arc::clone(&cookie_jar)))
-                        .await
-                        .is_err()
-                    {
-                        tracing::error!("Auth session failed for address {}", address);
-                        continue;
+                let wallet = match get_wallet(&secret) {
+                    Ok(wallet) => wallet,
+                    Err(e) => {
+                        tracing::error!("{e}");
+                        return;
                     }
+                };
 
-                    let verify_message = get_verify_message(&uuid);
+                let address = get_address(&wallet);
 
-                    let verify_signature = sign_message(&random_wallet, &verify_message)
-                        .expect("Failed to sign verify message");
-
-                    if let Ok(Some(verify_and_create_response)) = verify_and_create_session(
-                        &main_address,
-                        &verify_signature,
-                        &verify_message,
-                        Some(&proxy),
-                        Some(Arc::clone(&cookie_jar)),
-                    )
+                if auth_session(&uuid, Some(&proxy), Some(Arc::clone(&cookie_jar)))
                     .await
-                    {
-                        if !verify_and_create_response.success {
-                            tracing::error!(
-                                "Verify and create session failed for address {}",
-                                address
-                            );
-                            continue;
-                        }
-                    } else {
+                    .is_err()
+                {
+                    tracing::error!("Auth session failed for address {}", address);
+                    return;
+                }
+
+                let verify_message = get_verify_message(&uuid);
+
+                let verify_signature = sign_message(&random_wallet, &verify_message)
+                    .expect("Failed to sign verify message");
+
+                if let Ok(Some(verify_and_create_response)) = verify_and_create_session(
+                    &main_address,
+                    &verify_signature,
+                    &verify_message,
+                    Some(&proxy),
+                    Some(Arc::clone(&cookie_jar)),
+                )
+                .await
+                {
+                    if !verify_and_create_response.success {
                         tracing::error!("Verify and create session failed for address {}", address);
-                        continue;
+                        return;
                     }
+                } else {
+                    tracing::error!("Verify and create session failed for address {}", address);
+                    return;
+                }
 
-                    if auth_session(&uuid, Some(&proxy), Some(Arc::clone(&cookie_jar)))
-                        .await
-                        .is_err()
-                    {
-                        tracing::error!("Second auth session failed for address {}", address);
-                        continue;
-                    }
-
-                    let link_message = get_link_wallet_message(&main_address, &address);
-
-                    let signature =
-                        sign_message(&wallet, &link_message).expect("Failed to sign link message");
-
-                    if let Ok(Some(response_items)) = auth_link_wallet(
-                        &link_message,
-                        &address,
-                        &signature,
-                        Some(&proxy),
-                        Some(Arc::clone(&cookie_jar)),
-                    )
+                if auth_session(&uuid, Some(&proxy), Some(Arc::clone(&cookie_jar)))
                     .await
+                    .is_err()
+                {
+                    tracing::error!("Second auth session failed for address {}", address);
+                    return;
+                }
+
+                let link_message = get_link_wallet_message(&main_address, &address);
+
+                let signature =
+                    sign_message(&wallet, &link_message).expect("Failed to sign link message");
+
+                if let Ok(Some(response_items)) = auth_link_wallet(
+                    &link_message,
+                    &address,
+                    &signature,
+                    Some(&proxy),
+                    Some(Arc::clone(&cookie_jar)),
+                )
+                .await
+                {
+                    if let Some(response_item) =
+                        response_items.first().and_then(|item| item.as_ref())
                     {
-                        if let Some(response_item) =
-                            response_items.first().and_then(|item| item.as_ref())
-                        {
-                            if let Some(result) = &response_item.result {
-                                if let Some(data) = &result.data {
-                                    if let Some(json) = &data.json {
-                                        if let Some(eligibility) = &json.eligibility {
-                                            if let Some(eligible) = &eligibility.eligibility {
-                                                if eligible == "eligible" {
-                                                    if let Ok(Some(allocation_response)) = wallets(
-                                                        Some(&proxy),
-                                                        Some(Arc::clone(&cookie_jar)),
-                                                    )
-                                                    .await
+                        if let Some(result) = &response_item.result {
+                            if let Some(data) = &result.data {
+                                if let Some(json) = &data.json {
+                                    if let Some(eligibility) = &json.eligibility {
+                                        if let Some(eligible) = &eligibility.eligibility {
+                                            if eligible == "eligible" {
+                                                let wallets_result = wallets(
+                                                    Some(&proxy),
+                                                    Some(Arc::clone(&cookie_jar)),
+                                                )
+                                                .await;
+
+                                                let entry: String =
+                                                    if let Ok(Some(allocation_response)) =
+                                                        wallets_result
                                                     {
                                                         if let Some(amount) =
                                                             extract_allocation_amount(
                                                                 &allocation_response,
                                                             )
                                                         {
-                                                            let allocation =
+                                                            let allocation: f64 =
                                                                 amount as f64 / 10f64.powi(6);
 
-                                                            let entry = format!(
-                                                                "{}: {}\n",
-                                                                address, allocation
-                                                            );
-                                                            eligible_file
-                                                                .write_all(entry.as_bytes())
-                                                                .await
-                                                                .expect("Failed to write to file");
+                                                            format!("{}: {}\n", address, allocation)
                                                         } else {
-                                                            let entry = format!("{}\n", address);
-                                                            eligible_file
-                                                                .write_all(entry.as_bytes())
-                                                                .await
-                                                                .expect("Failed to write to file");
+                                                            format!("{}\n", address)
                                                         }
                                                     } else {
-                                                        let entry = format!("{}\n", address);
-                                                        eligible_file
-                                                            .write_all(entry.as_bytes())
-                                                            .await
-                                                            .expect("Failed to write to file");
-                                                    }
+                                                        format!("{}\n", address)
+                                                    };
+
+                                                let mut f = eligible_file.lock().await;
+                                                if let Err(e) = f.write_all(entry.as_bytes()).await
+                                                {
+                                                    tracing::error!(
+                                                        "Failed to write to file: {}",
+                                                        e
+                                                    );
                                                 }
                                             }
                                         }
