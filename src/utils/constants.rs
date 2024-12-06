@@ -1,3 +1,3 @@
+pub const PRIVATE_KEYS_FILE_PATH: &str = "data/private_keys.txt";
+pub const ELIGIBLE_FILE_PATH: &str = "data/eligible.txt";
 pub const PROXIES_FILE_PATH: &str = "data/proxies.txt";
-pub const ADDRESSES_FILE_PATH: &str = "data/addresses.txt";
-pub const NOT_CLAIMED_FILE_PATH: &str = "data/not_claimed.txt";
