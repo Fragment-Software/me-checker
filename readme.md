@@ -28,9 +28,9 @@ cargo build --release
 
 Before running the software, configure the necessary files:
 
-1. **private_keys.txt** : Add your private keys to `data/secrets.txt`.
+1. **secrets.txt** : Add your private keys to `data/secrets.txt`.
 2. **proxies.txt** : Add your proxies to `data/proxies.txt`.
-3. **cargo.toml**: Configure concurrency
+3. **config.toml**: Configure concurrency in `data/config.toml`.
 
 ### Running
 
@@ -74,9 +74,9 @@ cargo build --release
 
 Перед запуском программного обеспечения настройте необходимые файлы:
 
-1. **private_keys.txt** : Добавьте ваши приватные ключи в `data/secrets.txt`.
+1. **secrets.txt** : Добавьте ваши приватные ключи в `data/secrets.txt`.
 2. **proxies.txt** : Добавьте ваши прокси в `data/proxies.txt`.
-3. **cargo.toml**: Настройка параллелизма
+3. **config.toml**: Настройка параллелизма в `data/config.toml`.
 
 ### Запуск
 
