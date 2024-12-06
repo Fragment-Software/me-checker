@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
-use reqwest::{header::HeaderMap, Client, Method};
+use reqwest::{cookie::Jar, header::HeaderMap, Method};
 use serde::{de::DeserializeOwned, Serialize};
 
 #[derive(Clone)]
@@ -15,16 +15,26 @@ pub struct RequestParams<'a, S: Serialize> {
 
 pub async fn send_http_request<R: DeserializeOwned>(
     request_params: RequestParams<'_, impl Serialize>,
-) -> eyre::Result<R> {
-    let client = request_params.proxy.map_or_else(Client::new, |proxy| {
-        Client::builder()
-            .proxy(proxy.clone())
-            .build()
-            .unwrap_or_else(|err| {
-                tracing::error!("Failed to build a client with proxy: {proxy:?}. Error: {err}");
-                Client::new()
-            })
-    });
+    cookie_jar: Option<Arc<Jar>>,
+) -> eyre::Result<Option<R>> {
+    let client_builder = reqwest::Client::builder();
+    let client = if let Some(proxy) = request_params.proxy {
+        client_builder.proxy(proxy.clone())
+    } else {
+        client_builder
+    };
+
+    let client = if let Some(jar) = cookie_jar.clone() {
+        client.cookie_provider(jar).build().unwrap_or_else(|err| {
+            tracing::error!("Failed to build a client with cookies. Error: {err}");
+            reqwest::Client::new()
+        })
+    } else {
+        client.build().unwrap_or_else(|err| {
+            tracing::error!("Failed to build a client. Error: {err}");
+            reqwest::Client::new()
+        })
+    };
 
     let mut request = client.request(request_params.method.clone(), request_params.url);
 
@@ -36,28 +46,60 @@ pub async fn send_http_request<R: DeserializeOwned>(
         request = request.json(&body);
     }
 
-    if let Some(headers) = request_params.headers.as_ref() {
+    if let Some(headers) = request_params.headers {
         request = request.headers(headers.clone());
     }
 
-    let response = request
-        .send()
-        .await
-        .inspect_err(|e| tracing::error!("Request failed: {}", e))?;
+    let response = request.send().await.inspect_err(|e| {
+        tracing::error!(
+            "Request failed: {}. Proxy: {:?}",
+            e,
+            match request_params.proxy {
+                Some(p) => format!("{:?}", p),
+                None => "No proxy".to_string(),
+            }
+        )
+    })?;
 
-    // let status = response.status();
+    let response_headers = response.headers().clone();
+    let status = response.status();
 
     let text = response
         .text()
         .await
         .inspect_err(|e| tracing::error!("Failed to retrieve response text: {}", e))?;
 
-    // if !status.is_success() {
-    //     eyre::bail!("Status code not 200: {status}, {text}")
-    // }
+    if !status.is_success() {
+        tracing::error!(
+            "Request failed with status: {}. Response text: {}. Proxy: {:?}",
+            status,
+            text,
+            match request_params.proxy {
+                Some(p) => format!("{:?}", p),
+                None => "No proxy".to_string(),
+            }
+        );
+        eyre::bail!("HTTP error: {status} - {text}");
+    }
 
-    let deserialized_body = serde_json::from_str::<R>(&text)
+    let content_type = response_headers
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+
+    let response_body = if text.trim().is_empty() {
+        None
+    } else {
+        let deserialized = if content_type.contains("application/json") {
+            serde_json::from_str::<R>(&text)
+        } else {
+            let json_value = serde_json::json!(text);
+            serde_json::from_value::<R>(json_value)
+        }
         .inspect_err(|e| tracing::error!("Failed to deserialize response: {}\n {} ", e, text))?;
 
-    Ok(deserialized_body)
+        Some(deserialized)
+    };
+
+    Ok(response_body)
 }

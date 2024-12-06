@@ -1,8 +1,6 @@
 use std::path::Path;
 
-use tokio::fs::OpenOptions;
 use tokio::io::AsyncBufReadExt;
-use tokio::io::AsyncWriteExt;
 
 pub async fn read_file_lines(path: impl AsRef<Path>) -> eyre::Result<Vec<String>> {
     let file = tokio::fs::read(path).await?;
