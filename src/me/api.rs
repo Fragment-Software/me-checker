@@ -214,5 +214,13 @@ pub async fn wallets(
         headers: Some(headers),
     };
 
-    send_http_request::<String>(request_params, cookie_jar).await
+    let response = match send_http_request::<String>(request_params, cookie_jar).await {
+        Ok(response) => response,
+        Err(e) => {
+            tracing::error!("Request failed for wallets: {}", e);
+            return Err(e);
+        }
+    };
+
+    Ok(response)
 }
