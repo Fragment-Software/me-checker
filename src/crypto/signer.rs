@@ -10,11 +10,12 @@ use super::constants::{CURVE, PATH};
 pub fn get_wallet(secret: &str) -> eyre::Result<Keypair> {
     match mnemonic_to_private_key(secret) {
         Ok(private_key) => Ok(Keypair::from_base58_string(&private_key)),
-        Err(_) => Ok(Keypair::from_bytes(
-            &solana_sdk::bs58::decode(secret)
+        Err(_) => {
+            let decoded_key = solana_sdk::bs58::decode(secret)
                 .into_vec()
-                .expect("Invalid private key: {secret}"),
-        )?),
+                .map_err(|_| eyre::eyre!("Invalid private key: {secret}"))?;
+            Ok(Keypair::from_bytes(&decoded_key)?)
+        }
     }
 }
 
