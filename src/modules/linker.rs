@@ -73,6 +73,7 @@ async fn process_wallet_with_retries(
             Err((failed_index, failed_secret)) => {
                 tracing::warn!("Retrying wallet at index {failed_index}");
                 secret = failed_secret;
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
             }
         }
     }
