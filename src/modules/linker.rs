@@ -7,7 +7,7 @@ use crate::{
     config::Config,
     crypto::signer::{get_address, get_wallet},
     utils::{
-        constants::{PROXIES_FILE_PATH, SECRETS_FILE_PATH},
+        constants::{CLAIM_SECRETS_FILE_PATH, PROXIES_FILE_PATH, SECRETS_FILE_PATH},
         files::read_file_lines,
     },
 };
@@ -24,24 +24,34 @@ pub async fn linker(config: &Config) -> eyre::Result<()> {
     let proxies = Arc::new(proxies);
     let proxies_len = proxies.len();
 
-    let main_wallet = get_wallet(&config.claim_wallet_secret).expect("Invalid main wallet secret");
-    let main_address = Arc::new(get_address(&main_wallet));
-
-    let cookie_jar = Arc::new(Jar::default());
-
-    create_session(&main_wallet, &main_address, proxies.first(), &cookie_jar).await?;
-
+    let claim_wallets = Arc::new(read_file_lines(CLAIM_SECRETS_FILE_PATH).await?);
     let all_wallets = read_file_lines(SECRETS_FILE_PATH).await?;
+
+    if claim_wallets.len() != all_wallets.len() {
+        tracing::warn!("Number of claim wallets not equals to airdrop wallets");
+        return Ok(());
+    }
 
     let mut join_set = JoinSet::new();
 
     for (index, secret) in all_wallets.into_iter().enumerate() {
         let proxies = Arc::clone(&proxies);
-        let cookie_jar = Arc::clone(&cookie_jar);
-        let main_address = Arc::clone(&main_address);
+        let claim_wallets = Arc::clone(&claim_wallets);
 
         join_set.spawn(async move {
+            let main_wallet =
+                get_wallet(&claim_wallets[index]).expect("Invalid main wallet secret");
+            let main_address = Arc::new(get_address(&main_wallet));
+
+            let cookie_jar = Arc::new(Jar::default());
             let proxy = proxies[index % proxies_len].clone();
+
+            if let Err(e) =
+                create_session(&main_wallet, &main_address, proxies.first(), &cookie_jar).await
+            {
+                tracing::error!("{e}");
+                return;
+            };
 
             let wallet = match get_wallet(&secret) {
                 Ok(wallet) => wallet,
@@ -73,7 +83,7 @@ pub async fn linker(config: &Config) -> eyre::Result<()> {
         }
     }
 
-    tracing::info!("Finished! Successfully linked wallets to: {main_address}");
+    tracing::info!("Finished! Successfully linked wallets");
 
     Ok(())
 }
