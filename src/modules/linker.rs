@@ -67,6 +67,8 @@ pub async fn linker(config: &Config) -> eyre::Result<()> {
             {
                 tracing::error!("{e}");
             };
+
+            tracing::info!("Wallet {address} linked to {main_address}");
         });
 
         if join_set.len() >= config.parallelism {
