@@ -7,6 +7,7 @@ const CONFIG_FILE_PATH: &str = "data/config.toml";
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub struct Config {
     pub parallelism: usize,
+    pub claim_wallet_secret: String,
 }
 
 impl Config {
